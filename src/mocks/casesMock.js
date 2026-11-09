@@ -6,7 +6,6 @@ import {
   exclusiveCases,
 } from '../data/cases';
 
-// Имитация ответа сервера: возвращает Promise с задержкой 700 мс
 export function fetchCasesMock() {
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -17,6 +16,6 @@ export function fetchCasesMock() {
         starOccasions,
         exclusiveCases,
       });
-    }, 2000);
+    }, 1000);
   });
 }

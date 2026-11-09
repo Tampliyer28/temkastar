@@ -1,0 +1,130 @@
+import { useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { useGame } from '../context/GameContext';
+
+const STRIP_LEN = 60;
+const WIN_INDEX = 50;
+const SPIN_MS = 4000;
+const SPIN_EXTRA_MS = 600;
+export const COUNT_OPTIONS = [1, 2, 5, 10];
+
+// 1% от стоимости кейса
+const CASE_COIN_REWARD_PERCENT = 0.01;
+
+function pickRandom(prizes) {
+  if (!prizes || prizes.length === 0) return null;
+  const total = prizes.reduce((s, p) => s + p.chance, 0);
+  let r = Math.random() * total;
+  for (const p of prizes) { r -= p.chance; if (r < 0) return p; }
+  return prizes[0];
+}
+
+const makeStrip = (prizes, winner = null) =>
+  Array.from({ length: STRIP_LEN }, (_, i) =>
+    winner && i === WIN_INDEX ? winner : pickRandom(prizes)
+  );
+
+const makeStrips = (prizes, n, winners = null) =>
+  Array.from({ length: n }, (_, i) => makeStrip(prizes, winners ? winners[i] : null));
+
+export function useRoulette(caseData, allPrizes) {
+  const {
+    user, canAfford, spendBalance, addToInventory, addCoins,
+    addXp, incStat,
+  } = useGame();
+  const rouletteRefs = useRef([]);
+  const stripRefs = useRef([]);
+
+  const [count, setCountState] = useState(1);
+  const [spinning, setSpinning] = useState(false);
+  const [winPrizes, setWinPrizes] = useState([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [strips, setStrips] = useState(() => makeStrips(allPrizes, 1));
+
+  const price = caseData.price;
+  const currency = caseData.currency_id === 1 ? 'rubles' : 'coins';
+  const totalCost = price * count;
+
+  useLayoutEffect(() => {
+    strips.forEach((_, i) => {
+      const s = stripRefs.current[i], r = rouletteRefs.current[i];
+      if (!s || !r || !s.children[10]) return;
+      const el = s.children[10];
+      const off = el.offsetLeft + el.offsetWidth / 2 - r.clientWidth / 2;
+      s.style.transition = 'none';
+      s.style.transform = `translateX(${-off}px)`;
+    });
+  }, [strips]);
+
+  const setCount = useCallback((n) => {
+    if (spinning || modalOpen) return;
+    setCountState(n);
+    setStrips(makeStrips(allPrizes, n));
+  }, [spinning, modalOpen, allPrizes]);
+
+  const startAnimation = useCallback((n) => {
+    setTimeout(() => {
+      for (let i = 0; i < n; i++) {
+        const s = stripRefs.current[i], r = rouletteRefs.current[i];
+        const item = s?.children[WIN_INDEX];
+        if (!s || !r || !item) continue;
+
+        s.style.transition = 'none';
+        s.style.transform = 'translateX(0)';
+        void s.offsetWidth;
+
+        const jitter = (Math.random() - 0.5) * item.offsetWidth * 0.7;
+        const target = item.offsetLeft + item.offsetWidth / 2 + jitter - r.clientWidth / 2;
+        const duration = SPIN_MS + (n > 1 ? Math.random() * SPIN_EXTRA_MS : 0);
+
+        requestAnimationFrame(() => {
+          s.style.transition = `transform ${duration}ms cubic-bezier(0.12, 0.6, 0.1, 1)`;
+          s.style.transform = `translateX(${-target}px)`;
+        });
+      }
+
+      setTimeout(() => {
+        setSpinning(false);
+        setModalOpen(true);
+      }, SPIN_MS + (n > 1 ? SPIN_EXTRA_MS : 0) + 300);
+    }, 50);
+  }, []);
+
+  const openCase = useCallback(() => {
+    if (spinning || modalOpen) return;
+    if (!user) { alert('Войдите в аккаунт'); return; }
+    if (!canAfford(currency, totalCost)) {
+      alert(`Недостаточно ${currency === 'rubles' ? 'рублей' : 'монет'}`);
+      return;
+    }
+    setSpinning(true);
+
+    setTimeout(() => {
+      spendBalance(currency, totalCost);
+      incStat('cases', count);
+      addXp(Math.floor(totalCost / 10));
+
+      // 1% от стоимости открытых кейсов ===
+      const coinReward = Math.floor(price * count * CASE_COIN_REWARD_PERCENT);
+      if (coinReward > 0) addCoins(coinReward);
+
+      const winners = Array.from({ length: count }, () => pickRandom(allPrizes));
+      winners.forEach((w) => addToInventory(w, 1));
+
+      setWinPrizes(winners);
+      setStrips(makeStrips(allPrizes, winners.length, winners));
+      startAnimation(winners.length);
+    }, 300);
+  }, [spinning, modalOpen, user, canAfford, currency, totalCost, count, price, allPrizes, startAnimation, spendBalance, incStat, addXp, addToInventory, addCoins]);
+
+  const closeModal = useCallback(() => {
+    setModalOpen(false);
+    setWinPrizes([]);
+    setStrips(makeStrips(allPrizes, count));
+  }, [allPrizes, count]);
+
+  return {
+    rouletteRefs, stripRefs, strips, count, setCount, spinning,
+    winPrizes, modalOpen, openCase, closeModal, WIN_INDEX,
+    currency, totalCost,
+  };
+}
